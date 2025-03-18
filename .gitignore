@@ -1,0 +1,31 @@
+# Ignore the virtual environment
+bin/
+include/
+lib/
+lib64/
+pyvenv.cfg
+share/
+
+# Ignore large CSV and data files
+*.csv
+results/
+*.png
+
+# Ignore Python cache and compiled files
+__pycache__/
+*.py[cod]
+
+# Ignore logs and debug files
+logs/
+*.log
+*.out
+*.err
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore editor/IDE settings
+.vscode/
+.idea/
+*.sublime-workspace
