@@ -29,3 +29,9 @@ Thumbs.db
 .vscode/
 .idea/
 *.sublime-workspace
+__pycache__
+
+
+# Ignore github keys
+github_key
+github_key.pub
