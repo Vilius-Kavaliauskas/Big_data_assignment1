@@ -16,7 +16,6 @@ def analyze_large_file_paralelly(file_path, chunk_size=1000, njobs=None, **kwarg
         num_workers = mp.cpu_count() - 1
     print(f'Using {num_workers} worker processes')
     pool = mp.Pool(processes=num_workers)
-    usage_info = dict(percpu=[], cpu=[], ram=[])
 
     results = []
 
@@ -35,15 +34,15 @@ def analyze_large_file_paralelly(file_path, chunk_size=1000, njobs=None, **kwarg
 
             for mmsi in mmsis:
                 vessel_data = chunk.loc[chunk['MMSI'] == mmsi].copy()
-                result = pool.apply_async(analyze_single_vessel, args=(vessel_data))
+                result = pool.apply_async(analyze_single_vessel, args=(vessel_data,))
                 results.append(result)
                 vessel_data = None
 
-            usage_info['ram'].append(psutil.virtual_memory().percent)
-            usage_info['cpu'].append(psutil.cpu_percent(percpu=False))
-
             pbar.update(1)
             chunk = None
+
+            if i > 20:
+                break
 
 
     print("Joining pool...")
@@ -54,23 +53,23 @@ def analyze_large_file_paralelly(file_path, chunk_size=1000, njobs=None, **kwarg
 
 
 
-    # result = result.sort_values(by='speed_delta', na_position='last').drop_duplicates(subset=['# Timestamp', 'Navigational status', 'MMSI', 'Latitude', 'Longitude', 'COG'], keep='first')
+    result = result.sort_values(by='speed_delta', na_position='last').drop_duplicates(subset=['# Timestamp', 'Navigational status', 'MMSI', 'Latitude', 'Longitude', 'COG'], keep='first')
     print("Adding quadrants...")
     result['quadrant'], quadrant_bboxes = add_quadrants(result, **kwargs)
 
-    # quadrant_spoofs = result.groupby('quadrant').agg({'spoof': 'mean'}).reset_index()
-    # quadrant_counts = result['quadrant'].value_counts().reset_index()
-    # quadrant_counts.columns = ['quadrant', 'count']
-    # quadrant_spoofs = quadrant_spoofs.merge(quadrant_counts, on='quadrant')
-    # quadrant_spoofs = quadrant_spoofs.rename(columns={'spoof': 'spoof_rate'})
-    # quadrant_bboxes = quadrant_bboxes.merge(quadrant_spoofs, left_index=True, right_on='quadrant')
-    # quadrant_bboxes = quadrant_bboxes.sort_values(by='spoof_rate', ascending=False)
+    quadrant_spoofs = result.groupby('quadrant').agg({'spoof': 'mean'}).reset_index()
+    quadrant_counts = result['quadrant'].value_counts().reset_index()
+    quadrant_counts.columns = ['quadrant', 'count']
+    quadrant_spoofs = quadrant_spoofs.merge(quadrant_counts, on='quadrant')
+    quadrant_spoofs = quadrant_spoofs.rename(columns={'spoof': 'spoof_rate'})
+    quadrant_bboxes = quadrant_bboxes.merge(quadrant_spoofs, left_index=True, right_on='quadrant')
+    quadrant_bboxes = quadrant_bboxes.sort_values(by='spoof_rate', ascending=False)
 
 
-    # spoofed_mmsis = result[result['spoof'] == 1]['MMSI'].unique()
-    # result = result.loc[ result['MMSI'].isin(spoofed_mmsis) ].sort_values(by=['MMSI', '# Timestamp'], ascending=[True, True])
+    spoofed_mmsis = result[result['spoof'] == 1]['MMSI'].unique()
+    result = result.loc[ result['MMSI'].isin(spoofed_mmsis) ].sort_values(by=['MMSI', '# Timestamp'], ascending=[True, True])
  
-    return result, quadrant_bboxes, usage_info
+    return result, quadrant_bboxes
 
 
 @tw.timeit
@@ -175,7 +174,7 @@ def analyze_single_vessel(vessel_data):
             speed_delta = 0 if speed == 0 and last_speed == 0 else speed_delta # if both speeds are zero, nothing out of the ordinary
             vessel_data.loc[vessel_data.index[i], 'speed_delta'] = speed_delta
 
-            spoof = int((speed > 60*1.852) or (abs(speed_delta) > 0.7)) # 60 knots in km/h (a very high speed for a vessel) or more than 70% speed change
+            spoof = int((speed > 60*1.852) or (abs(speed_delta) > 2)) # 60 knots in km/h (a very high speed for a vessel) or more than 2x speed change
             vessel_data.loc[vessel_data.index[i - 1], 'spoof'] = spoof if i > 1 else 0  # only matters where it happened
         else:
             vessel_data.loc[vessel_data.index[i], 'Time_diff'] = 0
@@ -188,7 +187,6 @@ def analyze_single_vessel(vessel_data):
    
 
 def quadrant_bounding_boxes(data, num_intervals_lat=4, num_intervals_lon=4):
-    # Initialize a dictionary to store the bounding box coordinates of each quadrant
     quadrant_bounding_boxes = {}
 
     # Calculate the latitude and longitude step sizes
@@ -230,78 +228,9 @@ def add_quadrants(data, **kwargs):
 
 
 if __name__ == "__main__":
-    num_workers = np.arange(6, 8)
 
-    # percpu_usages = []
-    total_cpu_usages = []
-    ram_usages = []
-    durations = []
+    (res, quadrants), duration = analyze_large_file_paralelly("/home/viliuskava/studies/Big_data/assignment1/aisdk-2024-10-25.csv", 
+                                        20000, 6, num_intervals_lat=8, num_intervals_lon=8)
 
-    for njobs in num_workers:
-        print("==========================================")
-        if njobs == 1:
-            (res, quadrants, usage), duration = analyze_large_file_sequentially("/home/viliuskava/studies/Big_data/assignment1/aisdk-2024-10-25.csv", 
-                                        20000, num_intervals_lat=8, num_intervals_lon=8)
-        
-        else:
-            (res, quadrants, usage), duration = analyze_large_file_paralelly("/home/viliuskava/studies/Big_data/assignment1/aisdk-2024-10-25.csv", 
-                                        20000, njobs, num_intervals_lat=8, num_intervals_lon=8)
-        total_cpu_usage = sum(usage['cpu']) / len(usage['cpu'])
-        ram_usage = sum(usage['ram']) / len(usage['ram'])
-        total_cpu_usages.append(total_cpu_usage)
-        ram_usages.append(ram_usage)
-        durations.append(duration)
-
-        if njobs < 6:
-            res, quadrants, usage = None, None, None
-
-
-    fig, axs = plt.subplots(1, 2, figsize=(20, 5))
-
-    fig, axs = plt.subplots(2, 2, figsize=(16, 10))
-
-    axs[0,0].plot(num_workers, total_cpu_usages, label='Total CPU usage')
-    axs[0,0].set_xlabel('Number of workers')
-    axs[0,0].set_ylabel('Usage (%)')
-    axs[0,0].set_title('CPU usage')
-    
-    
-    axs[0,1].plot(num_workers, ram_usages, label='RAM usage')
-    axs[0,1].set_xlabel('Number of workers')
-    axs[0,1].set_ylabel('Usage (%)')
-    axs[0,1].set_title('RAM usage')
-    
-    
-    #axs[1,0].plot(num_workers, percpu_usages, label='CPU usage per unit')
-    #axs[1,0].set_xlabel('Number of workers')
-    #axs[1,0].set_ylabel('Usage (%)')
-    #axs[1,0].set_title('Per unit CPU usage')
-    
-
-    axs[1,1].plot(num_workers, durations, label='Duration', color='red')
-    axs[1,1].set_ylabel('Duration (s)')
-    axs[1,1].set_xlabel('Number of workers')
-    axs[1,1].set_title('Execution duration')
-
-    plt.savefig("/home/viliuskava/studies/Big_data/assignment1/results/results.png")
     res.to_csv("/home/viliuskava/studies/Big_data/assignment1/results/spoofed_mmsis.csv", index=False)
     quadrants.to_csv("/home/viliuskava/studies/Big_data/assignment1/results/spoofed_quadrants.csv", index=False)
-
-
-
-
-
-    # print("==========================================")
-    # (res2, quadrants2, usage2), duration_sequential = analyze_large_file("C:\\Users\\kavav\\Documents\\1 kursas (mag)\\2 semestras\\Big data\\downloads\\aisdk-2024-10-25.csv", 
-    #                                     1000, "sequential", num_intervals_lat=8, num_intervals_lon=8)
-    # print("-----------------------------")
-
-    # total_cpu_usage2 = sum(usage2['cpu']) / len(usage2['cpu'])
-    # ram_usage2 = sum(usage2['ram']) / len(usage2['ram'])
-    # print("Average CPU usage:", round(total_cpu_usage2, 3))
-    # print("Average RAM usage:", round(ram_usage2, 3))
-    # print("Sequential execution duration:", round(duration_sequential, 3))
-
-    # print("==========================================")
-    # print("Datasets equal:", res.equals(res2))
-
