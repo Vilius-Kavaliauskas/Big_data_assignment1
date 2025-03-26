@@ -41,9 +41,6 @@ def analyze_large_file_paralelly(file_path, chunk_size=1000, njobs=None, **kwarg
             pbar.update(1)
             chunk = None
 
-            if i > 20:
-                break
-
 
     print("Joining pool...")
     pool.close()
